@@ -67,8 +67,8 @@ features = [
 wasi = "0.11.0"
 
 [target.'cfg(target_os = "toyos")'.dependencies]
-toyos-abi = { path = "../../toyos-abi" }
-toyos = { path = "../../toyos" }
+toyos-abi = "0.1"
+toyos = "0.1"
 
 [dev-dependencies]
 env_logger = { version = "0.11", default-features = false }
