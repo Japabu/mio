@@ -4,14 +4,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::{Interest, Token};
-use toyos_abi::Fd;
+use toyos_abi::RawHandle;
 use toyos_abi::io_uring::*;
 
 static NEXT_SELECTOR_ID: AtomicUsize = AtomicUsize::new(1);
 
 /// An io_uring ring mapped into userspace.
 struct Ring {
-    fd: Fd,
+    fd: RawHandle,
     base: *mut u8,
     sq_size: u32,
     cq_size: u32,
@@ -110,14 +110,14 @@ impl Drop for Ring {
 /// A registration that needs POLL_ADD re-armed after each event.
 #[derive(Clone)]
 struct Registration {
-    fd: Fd,
+    fd: RawHandle,
     interest: Interest,
     token: Token,
 }
 
 #[derive(Debug)]
 struct SelectorInner {
-    registrations: Vec<(Fd, Interest, Token)>,
+    registrations: Vec<(RawHandle, Interest, Token)>,
 }
 
 #[derive(Clone)]
@@ -169,7 +169,7 @@ impl Selector {
         events.clear();
 
         // Re-arm POLL_ADDs for all registrations
-        let regs: Vec<(Fd, Interest, Token)> = {
+        let regs: Vec<(RawHandle, Interest, Token)> = {
             let inner = self.inner.lock().unwrap();
             inner.registrations.clone()
         };
@@ -177,7 +177,7 @@ impl Selector {
         for &(fd, interest, token) in &regs {
             let mut sqe = IoUringSqe::default();
             sqe.op = IORING_OP_POLL_ADD;
-            sqe.fd = fd.0;
+            sqe.fd = fd;
             sqe.op_flags = interests_to_flags(interest);
             sqe.user_data = token.0 as u64;
             self.ring.submit_sqe(&sqe);
@@ -212,13 +212,13 @@ impl Selector {
         Ok(())
     }
 
-    pub fn register_fd(&self, fd: Fd, token: Token, interest: Interest) -> io::Result<()> {
+    pub fn register_fd(&self, fd: RawHandle, token: Token, interest: Interest) -> io::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         inner.registrations.push((fd, interest, token));
         Ok(())
     }
 
-    pub fn reregister_fd(&self, fd: Fd, token: Token, interest: Interest) -> io::Result<()> {
+    pub fn reregister_fd(&self, fd: RawHandle, token: Token, interest: Interest) -> io::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         if let Some(reg) = inner.registrations.iter_mut().find(|r| r.0 == fd) {
             reg.1 = interest;
@@ -229,7 +229,7 @@ impl Selector {
         Ok(())
     }
 
-    pub fn deregister_fd(&self, fd: Fd) -> io::Result<()> {
+    pub fn deregister_fd(&self, fd: RawHandle) -> io::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         inner.registrations.retain(|r| r.0 != fd);
         Ok(())

@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use crate::net::TcpStream;
 use crate::{event, Interest, Registry, Token};
-use toyos_abi::Fd;
+use toyos_abi::RawHandle;
 use toyos_abi::syscall;
 
 /// A TCP listener backed by kernel pipes via netd.
@@ -13,7 +13,7 @@ use toyos_abi::syscall;
 /// Polling the notify_fd for readability indicates a connection is ready to accept.
 pub struct TcpListener {
     socket_id: toyos::net::TcpSocketId,
-    notify_fd: Fd,
+    notify_fd: RawHandle,
     local_addr: SocketAddr,
 }
 

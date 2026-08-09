@@ -3,14 +3,14 @@ use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr};
 
 use crate::{event, Interest, Registry, Token};
-use toyos_abi::Fd;
+use toyos_abi::RawHandle;
 use toyos_abi::syscall::{self, SyscallError};
 use toyos::net::{NetError, TcpSocketId};
 
 /// A non-blocking TCP stream backed by kernel pipes via netd.
 pub struct TcpStream {
-    rx_fd: Fd,
-    tx_fd: Fd,
+    rx_fd: RawHandle,
+    tx_fd: RawHandle,
     peer_addr: SocketAddr,
     local_port: u16,
     socket_id: TcpSocketId,
