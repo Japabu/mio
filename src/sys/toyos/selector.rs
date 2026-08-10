@@ -25,9 +25,10 @@ unsafe impl Sync for Ring {}
 
 impl Ring {
     fn new(depth: u32) -> io::Result<Self> {
-        let (fd, shm_token) = toyos_abi::syscall::io_uring_setup(depth)
+        // The ring owns its page and the kernel maps it, so there is no second
+        // handle and no second lifetime for a mapping only this ring uses.
+        let (fd, base) = unsafe { toyos_abi::syscall::io_uring_setup(depth) }
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{e}")))?;
-        let base = unsafe { toyos_abi::syscall::map_shared(shm_token) };
         // Read params from offset 0
         let params = unsafe { &*(base as *const IoUringParams) };
         Ok(Self {
