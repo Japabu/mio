@@ -9,8 +9,8 @@ use toyos::net::{NetError, TcpSocketId};
 
 /// A non-blocking TCP stream backed by kernel pipes via netd.
 pub struct TcpStream {
-    rx_fd: RawHandle,
-    tx_fd: RawHandle,
+    rx_handle: RawHandle,
+    tx_handle: RawHandle,
     peer_addr: SocketAddr,
     local_port: u16,
     socket_id: TcpSocketId,
@@ -43,20 +43,21 @@ impl TcpStream {
         let conn = toyos::net::tcp_connect(ip, addr.port(), 30000).map_err(net_err_to_io)?;
 
         Ok(TcpStream {
-            rx_fd: conn.rx.into_fd(),
-            tx_fd: conn.tx.into_fd(),
+            rx_handle: conn.rx.into_raw(),
+            tx_handle: conn.tx.into_raw(),
             peer_addr: addr,
             local_port: conn.local_port,
             socket_id: conn.socket_id,
         })
     }
 
-    /// Create a TcpStream from pre-existing pipe FDs (used by TcpListener::accept).
+    /// Create a TcpStream from pipe ends netd already handed over (used by
+    /// TcpListener::accept).
     pub(crate) fn from_accepted(accepted: toyos::net::TcpAccepted) -> TcpStream {
         let peer_addr = SocketAddr::from((accepted.remote_addr, accepted.remote_port));
         TcpStream {
-            rx_fd: accepted.rx.into_fd(),
-            tx_fd: accepted.tx.into_fd(),
+            rx_handle: accepted.rx.into_raw(),
+            tx_handle: accepted.tx.into_raw(),
             peer_addr,
             local_port: accepted.local_port,
             socket_id: accepted.socket_id,
@@ -114,7 +115,7 @@ impl TcpStream {
 
 impl Read for TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match syscall::read_nonblock(self.rx_fd, buf) {
+        match syscall::read_nonblock(self.rx_handle, buf) {
             Ok(0) => Ok(0),
             Ok(n) => Ok(n),
             Err(SyscallError::WouldBlock) => Err(io::ErrorKind::WouldBlock.into()),
@@ -125,7 +126,7 @@ impl Read for TcpStream {
 
 impl Read for &'_ TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match syscall::read_nonblock(self.rx_fd, buf) {
+        match syscall::read_nonblock(self.rx_handle, buf) {
             Ok(0) => Ok(0),
             Ok(n) => Ok(n),
             Err(SyscallError::WouldBlock) => Err(io::ErrorKind::WouldBlock.into()),
@@ -136,7 +137,7 @@ impl Read for &'_ TcpStream {
 
 impl Write for TcpStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match syscall::write_nonblock(self.tx_fd, buf) {
+        match syscall::write_nonblock(self.tx_handle, buf) {
             Ok(n) => Ok(n),
             Err(SyscallError::WouldBlock) => Err(io::ErrorKind::WouldBlock.into()),
             Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
@@ -150,7 +151,7 @@ impl Write for TcpStream {
 
 impl Write for &'_ TcpStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match syscall::write_nonblock(self.tx_fd, buf) {
+        match syscall::write_nonblock(self.tx_handle, buf) {
             Ok(n) => Ok(n),
             Err(SyscallError::WouldBlock) => Err(io::ErrorKind::WouldBlock.into()),
             Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
@@ -171,10 +172,10 @@ impl event::Source for TcpStream {
     ) -> io::Result<()> {
         let sel = registry.selector();
         if interests.is_readable() {
-            sel.register_fd(self.rx_fd, token, Interest::READABLE)?;
+            sel.register_handle(self.rx_handle, token, Interest::READABLE)?;
         }
         if interests.is_writable() {
-            sel.register_fd(self.tx_fd, token, Interest::WRITABLE)?;
+            sel.register_handle(self.tx_handle, token, Interest::WRITABLE)?;
         }
         Ok(())
     }
@@ -186,21 +187,21 @@ impl event::Source for TcpStream {
         interests: Interest,
     ) -> io::Result<()> {
         let sel = registry.selector();
-        sel.deregister_fd(self.rx_fd)?;
-        sel.deregister_fd(self.tx_fd)?;
+        sel.deregister_handle(self.rx_handle)?;
+        sel.deregister_handle(self.tx_handle)?;
         if interests.is_readable() {
-            sel.register_fd(self.rx_fd, token, Interest::READABLE)?;
+            sel.register_handle(self.rx_handle, token, Interest::READABLE)?;
         }
         if interests.is_writable() {
-            sel.register_fd(self.tx_fd, token, Interest::WRITABLE)?;
+            sel.register_handle(self.tx_handle, token, Interest::WRITABLE)?;
         }
         Ok(())
     }
 
     fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
         let sel = registry.selector();
-        sel.deregister_fd(self.rx_fd)?;
-        sel.deregister_fd(self.tx_fd)?;
+        sel.deregister_handle(self.rx_handle)?;
+        sel.deregister_handle(self.tx_handle)?;
         Ok(())
     }
 }
@@ -208,16 +209,16 @@ impl event::Source for TcpStream {
 impl Drop for TcpStream {
     fn drop(&mut self) {
         let _ = toyos::net::tcp_close(self.socket_id);
-        syscall::close(self.rx_fd);
-        syscall::close(self.tx_fd);
+        syscall::close(self.rx_handle);
+        syscall::close(self.tx_handle);
     }
 }
 
 impl fmt::Debug for TcpStream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TcpStream")
-            .field("rx_fd", &self.rx_fd)
-            .field("tx_fd", &self.tx_fd)
+            .field("rx_handle", &self.rx_handle)
+            .field("tx_handle", &self.tx_handle)
             .field("peer_addr", &self.peer_addr)
             .finish()
     }

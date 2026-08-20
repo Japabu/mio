@@ -10,10 +10,11 @@ use toyos_abi::syscall;
 /// A TCP listener backed by kernel pipes via netd.
 ///
 /// netd writes a byte to the notify pipe when a new connection arrives.
-/// Polling the notify_fd for readability indicates a connection is ready to accept.
+/// Polling the notify handle for readability indicates a connection is ready
+/// to accept.
 pub struct TcpListener {
     socket_id: toyos::net::TcpSocketId,
-    notify_fd: RawHandle,
+    notify_handle: RawHandle,
     local_addr: SocketAddr,
 }
 
@@ -34,7 +35,7 @@ impl TcpListener {
 
         Ok(TcpListener {
             socket_id: bound.socket_id,
-            notify_fd: bound.notify.into_fd(),
+            notify_handle: bound.notify.into_raw(),
             local_addr: bound_addr,
         })
     }
@@ -45,7 +46,7 @@ impl TcpListener {
     pub fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
         // Try to read a notification byte (non-blocking)
         let mut byte = [0u8; 1];
-        match syscall::read_nonblock(self.notify_fd, &mut byte) {
+        match syscall::read_nonblock(self.notify_handle, &mut byte) {
             Err(toyos_abi::syscall::SyscallError::WouldBlock) => {
                 return Err(io::ErrorKind::WouldBlock.into());
             }
@@ -91,7 +92,7 @@ impl event::Source for TcpListener {
         let _ = interests;
         registry
             .selector()
-            .register_fd(self.notify_fd, token, Interest::READABLE)
+            .register_handle(self.notify_handle, token, Interest::READABLE)
     }
 
     fn reregister(
@@ -103,18 +104,18 @@ impl event::Source for TcpListener {
         let _ = interests;
         registry
             .selector()
-            .reregister_fd(self.notify_fd, token, Interest::READABLE)
+            .reregister_handle(self.notify_handle, token, Interest::READABLE)
     }
 
     fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
-        registry.selector().deregister_fd(self.notify_fd)
+        registry.selector().deregister_handle(self.notify_handle)
     }
 }
 
 impl Drop for TcpListener {
     fn drop(&mut self) {
         let _ = toyos::net::tcp_close(self.socket_id);
-        syscall::close(self.notify_fd);
+        syscall::close(self.notify_handle);
     }
 }
 
